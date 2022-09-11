@@ -28,6 +28,7 @@
 
 #include "RNA_access.h"
 #include "RNA_path.h"
+#include "RNA_prototypes.h"
 
 #include "BLI_bitmap.h"
 #include "BLI_memblock.h"
@@ -586,18 +587,12 @@ static DRWUniformAttrBuf *drw_uniform_attrs_pool_ensure(GHash *table,
 }
 
 /* This function mirrors lookup_property in cycles/blender/blender_object.cpp */
-static bool drw_uniform_property_lookup(ID *id, const char *name, float r_data[4])
+static bool drw_uniform_property_lookup_ptr(PointerRNA *id_ptr, const char *name, float r_data[4])
 {
-  PointerRNA ptr, id_ptr;
+  PointerRNA ptr;
   PropertyRNA *prop;
 
-  if (!id) {
-    return false;
-  }
-
-  RNA_id_pointer_create(id, &id_ptr);
-
-  if (!RNA_path_resolve(&id_ptr, name, &ptr, &prop)) {
+  if (!RNA_path_resolve(id_ptr, name, &ptr, &prop)) {
     return false;
   }
 
@@ -632,6 +627,19 @@ static bool drw_uniform_property_lookup(ID *id, const char *name, float r_data[4
   }
 
   return false;
+}
+
+static bool drw_uniform_property_lookup(ID *id, const char *name, float r_data[4])
+{
+  PointerRNA id_ptr;
+
+  if (!id) {
+    return false;
+  }
+
+  RNA_id_pointer_create(id, &id_ptr);
+
+  return drw_uniform_property_lookup_ptr(&id_ptr, name, r_data);
 }
 
 /* This function mirrors lookup_instance_property in cycles/blender/blender_object.cpp */
@@ -689,6 +697,73 @@ void drw_uniform_attrs_pool_update(GHash *table,
       drw_uniform_attribute_lookup(attr, ob, dupli_parent, dupli_source, *values++);
     }
   }
+}
+
+GPUUniformBuf *drw_ensure_layer_attribute_buffer()
+{
+  DRWData *data = DST.vmempool;
+
+  if (data->vlattrs_ubo_ready && data->vlattrs_ubo != NULL) {
+    return data->vlattrs_ubo;
+  }
+
+  /* Allocate the buffer data. */
+  const int buf_size = DRW_RESOURCE_CHUNK_LEN;
+
+  if (data->vlattrs_buf == NULL) {
+    data->vlattrs_buf = MEM_calloc_arrayN(
+        buf_size, sizeof(LayerAttribute), "View Layer Attr Data");
+  }
+
+  /* Prepare pointers for lookup. */
+  PointerRNA scene_ptr, layer_ptr, world_ptr;
+
+  RNA_id_pointer_create(&DST.draw_ctx.scene->id, &scene_ptr);
+  RNA_pointer_create(&DST.draw_ctx.scene->id, &RNA_ViewLayer, DST.draw_ctx.view_layer, &layer_ptr);
+  RNA_id_pointer_create(&DST.draw_ctx.scene->world->id, &world_ptr);
+
+  /* Look up attributes.
+   *
+   * Mirrors code in draw_resource.cc and cycles/blender/shader.cpp.
+   */
+  LayerAttribute *buffer = data->vlattrs_buf;
+  int count = 0;
+
+  LISTBASE_FOREACH (GPULayerAttr *, attr, &data->vlattrs_name_list) {
+    float value[4];
+
+    if (drw_uniform_property_lookup_ptr(&layer_ptr, attr->name_id_prop, value) ||
+        drw_uniform_property_lookup_ptr(&layer_ptr, attr->name, value) ||
+        drw_uniform_property_lookup_ptr(&scene_ptr, attr->name_id_prop, value) ||
+        drw_uniform_property_lookup_ptr(&scene_ptr, attr->name, value) ||
+        drw_uniform_property_lookup_ptr(&world_ptr, attr->name_id_prop, value) ||
+        drw_uniform_property_lookup_ptr(&world_ptr, attr->name, value)) {
+      LayerAttribute *item = &buffer[count++];
+
+      memcpy(item->data, value, sizeof(item->data));
+      item->hash_code = attr->hash_code;
+
+      /* Check if the buffer is full just in case. */
+      if (count >= buf_size) {
+        break;
+      }
+    }
+  }
+
+  buffer[0].buffer_length = count;
+
+  /* Update or create the UBO object. */
+  if (data->vlattrs_ubo != NULL) {
+    GPU_uniformbuf_update(data->vlattrs_ubo, buffer);
+  }
+  else {
+    data->vlattrs_ubo = GPU_uniformbuf_create_ex(
+        sizeof(*buffer) * buf_size, buffer, "View Layer Attributes");
+  }
+
+  data->vlattrs_ubo_ready = true;
+
+  return data->vlattrs_ubo;
 }
 
 DRWSparseUniformBuf *DRW_uniform_attrs_pool_find_ubo(GHash *table,

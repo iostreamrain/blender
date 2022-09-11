@@ -21,20 +21,18 @@
 /**
  * Extract object attribute from RNA property.
  * Returns true if the attribute was correctly extracted.
- * This function mirrors lookup_property in cycles/blender/blender_object.cpp
+ * This function mirrors lookup_property in cycles/blender/object.cpp
  */
-bool ObjectAttribute::id_property_lookup(ID *id, const char *name)
+static bool ptr_property_lookup(PointerRNA *id_ptr, const char *name, float *r_value)
 {
-  PointerRNA ptr, id_ptr;
+  PointerRNA ptr;
   PropertyRNA *prop;
 
-  if (id == nullptr) {
+  if (id_ptr->data == nullptr) {
     return false;
   }
 
-  RNA_id_pointer_create(id, &id_ptr);
-
-  if (!RNA_path_resolve(&id_ptr, name, &ptr, &prop)) {
+  if (!RNA_path_resolve(id_ptr, name, &ptr, &prop)) {
     return false;
   }
 
@@ -52,22 +50,31 @@ bool ObjectAttribute::id_property_lookup(ID *id, const char *name)
       value = RNA_property_float_get(&ptr, prop);
     }
     else if (type == PROP_INT) {
-      value = RNA_property_int_get(&ptr, prop);
+      value = static_cast<float>(RNA_property_int_get(&ptr, prop));
     }
     else {
       return false;
     }
 
-    *reinterpret_cast<float4 *>(&data_x) = float4(value, value, value, 1.0f);
+    *reinterpret_cast<float4 *>(r_value) = float4(value, value, value, 1.0f);
     return true;
   }
 
   if (type == PROP_FLOAT && array_len <= 4) {
-    *reinterpret_cast<float4 *>(&data_x) = float4(0.0f, 0.0f, 0.0f, 1.0f);
-    RNA_property_float_get_array(&ptr, prop, &data_x);
+    *reinterpret_cast<float4 *>(r_value) = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    RNA_property_float_get_array(&ptr, prop, r_value);
     return true;
   }
   return false;
+}
+
+bool ObjectAttribute::id_property_lookup(ID *id, const char *name)
+{
+  PointerRNA id_ptr;
+
+  RNA_id_pointer_create(id, &id_ptr);
+
+  return ptr_property_lookup(&id_ptr, name, &data_x);
 }
 
 /**
@@ -104,6 +111,27 @@ bool ObjectAttribute::sync(const blender::draw::ObjectRef &ref, const GPUUniform
     }
   }
   return false;
+}
+
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name LayerAttributes
+ * \{ */
+
+bool LayerAttribute::sync(PointerRNA *scene,
+                          PointerRNA *layer,
+                          PointerRNA *world,
+                          const GPULayerAttr &attr)
+{
+  hash_code = attr.hash_code;
+
+  return ptr_property_lookup(layer, attr.name_id_prop, &data.x) ||
+         ptr_property_lookup(layer, attr.name, &data.x) ||
+         ptr_property_lookup(scene, attr.name_id_prop, &data.x) ||
+         ptr_property_lookup(scene, attr.name, &data.x) ||
+         ptr_property_lookup(world, attr.name_id_prop, &data.x) ||
+         ptr_property_lookup(world, attr.name, &data.x);
 }
 
 /** \} */

@@ -4,6 +4,8 @@
 #ifndef __BLENDER_UTIL_H__
 #define __BLENDER_UTIL_H__
 
+#include "RNA_path.h"
+
 #include "scene/mesh.h"
 #include "scene/scene.h"
 
@@ -697,6 +699,46 @@ static inline bool object_need_motion_attribute(BObjectInfo &b_ob_info, Scene *s
   /* Motion pass which implies 3 motion steps, or motion blur which is not disabled on object
    * level. */
   return true;
+}
+
+/* This function mirrors drw_uniform_property_lookup in draw_instance_data.cpp
+ * and ptr_property_lookup in draw_resource.cc */
+static inline bool lookup_property(BL::Pointer b_id, const string &name, float4 *r_value)
+{
+  PointerRNA ptr;
+  PropertyRNA *prop;
+
+  if (!RNA_path_resolve(&b_id.ptr, name.c_str(), &ptr, &prop)) {
+    return false;
+  }
+
+  if (prop == NULL) {
+    return false;
+  }
+
+  PropertyType type = RNA_property_type(prop);
+  int arraylen = RNA_property_array_length(&ptr, prop);
+
+  if (arraylen == 0) {
+    float value;
+
+    if (type == PROP_FLOAT)
+      value = RNA_property_float_get(&ptr, prop);
+    else if (type == PROP_INT)
+      value = static_cast<float>(RNA_property_int_get(&ptr, prop));
+    else
+      return false;
+
+    *r_value = make_float4(value, value, value, 1.0f);
+    return true;
+  }
+  else if (type == PROP_FLOAT && arraylen <= 4) {
+    *r_value = make_float4(0.0f, 0.0f, 0.0f, 1.0f);
+    RNA_property_float_get_array(&ptr, prop, &r_value->x);
+    return true;
+  }
+
+  return false;
 }
 
 class EdgeMap {

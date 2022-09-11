@@ -94,6 +94,13 @@ bool BlenderSync::object_is_light(BL::Object &b_ob)
   return (b_ob_data && b_ob_data.is_a(&RNA_Light));
 }
 
+bool BlenderSync::object_is_camera(BL::Object &b_ob)
+{
+  BL::ID b_ob_data = b_ob.data();
+
+  return (b_ob_data && b_ob_data.is_a(&RNA_Camera));
+}
+
 void BlenderSync::sync_object_motion_init(BL::Object &b_parent, BL::Object &b_ob, Object *object)
 {
   /* Initialize motion blur for object, detecting if it's enabled and creating motion
@@ -353,45 +360,6 @@ Object *BlenderSync::sync_object(BL::Depsgraph &b_depsgraph,
   return object;
 }
 
-/* This function mirrors drw_uniform_property_lookup in draw_instance_data.cpp */
-static bool lookup_property(BL::ID b_id, const string &name, float4 *r_value)
-{
-  PointerRNA ptr;
-  PropertyRNA *prop;
-
-  if (!RNA_path_resolve(&b_id.ptr, name.c_str(), &ptr, &prop)) {
-    return false;
-  }
-
-  if (prop == NULL) {
-    return false;
-  }
-
-  PropertyType type = RNA_property_type(prop);
-  int arraylen = RNA_property_array_length(&ptr, prop);
-
-  if (arraylen == 0) {
-    float value;
-
-    if (type == PROP_FLOAT)
-      value = RNA_property_float_get(&ptr, prop);
-    else if (type == PROP_INT)
-      value = static_cast<float>(RNA_property_int_get(&ptr, prop));
-    else
-      return false;
-
-    *r_value = make_float4(value, value, value, 1.0f);
-    return true;
-  }
-  else if (type == PROP_FLOAT && arraylen <= 4) {
-    *r_value = make_float4(0.0f, 0.0f, 0.0f, 1.0f);
-    RNA_property_float_get_array(&ptr, prop, &r_value->x);
-    return true;
-  }
-
-  return false;
-}
-
 /* This function mirrors drw_uniform_attribute_lookup in draw_instance_data.cpp */
 static float4 lookup_instance_property(BL::DepsgraphObjectInstance &b_instance,
                                        const string &name,
@@ -451,7 +419,8 @@ bool BlenderSync::sync_object_attributes(BL::DepsgraphObjectInstance &b_instance
     std::string real_name;
     BlenderAttributeType type = blender_attribute_name_split_type(name, &real_name);
 
-    if (type != BL::ShaderNodeAttribute::attribute_type_GEOMETRY) {
+    if (type == BL::ShaderNodeAttribute::attribute_type_OBJECT ||
+        type == BL::ShaderNodeAttribute::attribute_type_INSTANCER) {
       bool use_instancer = (type == BL::ShaderNodeAttribute::attribute_type_INSTANCER);
       float4 value = lookup_instance_property(b_instance, real_name, use_instancer);
 

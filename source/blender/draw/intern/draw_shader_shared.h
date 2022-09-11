@@ -14,6 +14,7 @@ typedef struct ObjectBounds ObjectBounds;
 typedef struct VolumeInfos VolumeInfos;
 typedef struct CurvesInfos CurvesInfos;
 typedef struct ObjectAttribute ObjectAttribute;
+typedef struct LayerAttribute LayerAttribute;
 typedef struct DrawCommand DrawCommand;
 typedef struct DispatchCommand DispatchCommand;
 typedef struct DRWDebugPrintBuffer DRWDebugPrintBuffer;
@@ -25,6 +26,7 @@ typedef struct DRWDebugDrawBuffer DRWDebugDrawBuffer;
 struct Object;
 struct ID;
 struct GPUUniformAttr;
+struct GPULayerAttr;
 
 namespace blender::draw {
 
@@ -212,6 +214,20 @@ struct ObjectAttribute {
 /** \note we only align to 4 bytes and fetch data manually so make sure
  * C++ compiler gives us the same size. */
 BLI_STATIC_ASSERT_ALIGN(ObjectAttribute, 20)
+
+#pragma pack(push, 4)
+struct LayerAttribute {
+  float4 data;
+  uint hash_code;
+  uint buffer_length; /* Only in the first record. */
+  uint _pad1, _pad2;
+
+#if !defined(GPU_SHADER) && defined(__cplusplus)
+  bool sync(PointerRNA *scene, PointerRNA *layer, PointerRNA *world, const GPULayerAttr &attr);
+#endif
+};
+#pragma pack(pop)
+BLI_STATIC_ASSERT_ALIGN(LayerAttribute, 32)
 
 /** \} */
 

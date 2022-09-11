@@ -63,6 +63,11 @@ template<typename K, typename T> class id_map {
     b_recalc.insert(id_ptr);
   }
 
+  bool check_recalc(const BL::ID &id)
+  {
+    return id.ptr.data && b_recalc.find(id.ptr.data) != b_recalc.end();
+  }
+
   bool has_recalc()
   {
     return !(b_recalc.empty());

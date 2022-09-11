@@ -120,6 +120,11 @@ class BlenderSync {
   void sync_shaders(BL::Depsgraph &b_depsgraph, BL::SpaceView3D &b_v3d, bool update_all);
   void sync_nodes(Shader *shader, BL::ShaderNodeTree &b_ntree);
 
+  bool scene_attr_needs_recalc(Shader *shader, BL::Depsgraph &b_depsgraph);
+  void resolve_view_layer_attributes(Shader *shader,
+                                     ShaderGraph *graph,
+                                     BL::Depsgraph &b_depsgraph);
+
   /* Object */
   Object *sync_object(BL::Depsgraph &b_depsgraph,
                       BL::ViewLayer &b_view_layer,
@@ -207,6 +212,7 @@ class BlenderSync {
   bool object_is_geometry(BObjectInfo &b_ob_info);
   bool object_can_have_geometry(BL::Object &b_ob);
   bool object_is_light(BL::Object &b_ob);
+  bool object_is_camera(BL::Object &b_ob);
 
   /* variables */
   BL::RenderEngine b_engine;
@@ -225,6 +231,7 @@ class BlenderSync {
   /** Remember which geometries come from which objects to be able to sync them after changes. */
   map<void *, set<BL::ID>> instance_geometries_by_object;
   set<float> motion_times;
+  set<Shader *> shaders_with_layer_attrs;
   void *world_map;
   bool world_recalc;
   BlenderViewportParameters viewport_parameters;

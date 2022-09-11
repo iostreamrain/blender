@@ -43,6 +43,9 @@ static int node_shader_gpu_attribute(GPUMaterial *mat,
   if (is_varying) {
     cd_attr = GPU_attribute(mat, CD_AUTO_FROM_NAME, attr->name);
   }
+  else if (attr->type == SHD_ATTRIBUTE_VIEW_LAYER) {
+    cd_attr = GPU_layer_attribute(mat, attr->name);
+  }
   else {
     cd_attr = GPU_uniform_attribute(mat,
                                     attr->name,

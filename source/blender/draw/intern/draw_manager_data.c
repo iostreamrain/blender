@@ -1774,6 +1774,11 @@ void DRW_shgroup_add_material_resources(DRWShadingGroup *grp, struct GPUMaterial
     drw_shgroup_uniform_create_ex(grp, loc, DRW_UNIFORM_BLOCK_OBATTRS, uattrs, 0, 0, 1);
     grp->uniform_attrs = uattrs;
   }
+
+  if (GPU_material_layer_attributes(material) != NULL) {
+    int loc = GPU_shader_get_uniform_block_binding(grp->shader, GPU_LAYER_ATTRIBUTE_UBO_BLOCK_NAME);
+    drw_shgroup_uniform_create_ex(grp, loc, DRW_UNIFORM_BLOCK_VLATTRS, NULL, 0, 0, 1);
+  }
 }
 
 GPUVertFormat *DRW_shgroup_instance_format_array(const DRWInstanceAttrFormat attrs[],

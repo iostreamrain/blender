@@ -8,6 +8,9 @@
 #include "BKE_global.h"
 #include "GPU_compute.h"
 
+#include "RNA_access.h"
+#include "RNA_prototypes.h"
+
 #include "draw_debug.hh"
 #include "draw_defines.h"
 #include "draw_manager.h"
@@ -35,6 +38,7 @@ void Manager::begin_sync()
   }
 
   acquired_textures.clear();
+  layer_attributes.clear();
 
 #ifdef DEBUG
   /* Detect uninitialized data. */
@@ -52,14 +56,53 @@ void Manager::begin_sync()
   resource_handle(float4x4::identity());
 }
 
+void Manager::sync_layer_attributes()
+{
+  /* Sort the attribute IDs - the shaders use binary search. */
+  Vector<uint32_t> id_list;
+
+  id_list.reserve(layer_attributes.size());
+
+  for (uint32_t id : layer_attributes.keys()) {
+    id_list.append(id);
+  }
+
+  std::sort(id_list.begin(), id_list.end());
+
+  /* Resolve RNA pointers for the scene and layer. */
+  PointerRNA rna_scene, rna_layer, rna_world;
+
+  RNA_id_pointer_create(&DST.draw_ctx.scene->id, &rna_scene);
+  RNA_pointer_create(&DST.draw_ctx.scene->id, &RNA_ViewLayer, DST.draw_ctx.view_layer, &rna_layer);
+  RNA_id_pointer_create(&DST.draw_ctx.scene->world->id, &rna_world);
+
+  /* Look up the attributes. */
+  int count = 0, size = layer_attributes_buf.end() - layer_attributes_buf.begin();
+
+  for (uint32_t id : id_list) {
+    if (layer_attributes_buf[count].sync(
+            &rna_scene, &rna_layer, &rna_world, layer_attributes.lookup(id))) {
+      /* Check if the buffer is full. */
+      if (++count == size) {
+        break;
+      }
+    }
+  }
+
+  layer_attributes_buf[0].buffer_length = count;
+}
+
 void Manager::end_sync()
 {
   GPU_debug_group_begin("Manager.end_sync");
+
+  sync_layer_attributes();
 
   matrix_buf.push_update();
   bounds_buf.push_update();
   infos_buf.push_update();
   attributes_buf.push_update();
+  layer_attributes_buf.push_update();
   attributes_buf_legacy.push_update();
 
   /* Useful for debugging the following resource finalize. But will trigger the drawing of the GPU
@@ -100,6 +143,7 @@ void Manager::resource_bind()
   GPU_storagebuf_bind(matrix_buf, DRW_OBJ_MAT_SLOT);
   GPU_storagebuf_bind(infos_buf, DRW_OBJ_INFOS_SLOT);
   GPU_storagebuf_bind(attributes_buf, DRW_OBJ_ATTR_SLOT);
+  GPU_uniformbuf_bind(layer_attributes_buf, DRW_LAYER_ATTR_UBO_SLOT);
   /* 2 is the hardcoded location of the uniform attr UBO. */
   /* TODO(@fclem): Remove this workaround. */
   GPU_uniformbuf_bind(attributes_buf_legacy, 2);
