@@ -667,7 +667,7 @@ void BKE_pbvh_free(PBVH *pbvh)
         BLI_gset_free(node->bm_other_verts, NULL);
       }
 
-      pbvh_pixels_free(node);
+      pbvh_node_pixels_free(node);
     }
   }
 
@@ -696,6 +696,8 @@ void BKE_pbvh_free(PBVH *pbvh)
   if (pbvh->vbo_id) {
     GPU_pbvh_free_format(pbvh->vbo_id);
   }
+
+  pbvh_pixels_free(pbvh);
 
   MEM_freeN(pbvh);
 }
