@@ -31,6 +31,7 @@
 #include "BLI_rect.h"
 #include "BLI_vector.hh"
 #include "BLI_vector_list.hh"
+#include "BLI_virtual_array.hh"
 
 #include "DNA_meshdata_types.h"
 
@@ -46,44 +47,73 @@ struct UVPrimitive;
 struct UVPrimitiveEdge;
 struct UVVertex;
 
-struct MeshVertex {
-  int64_t v;
-  Vector<MeshEdge *> edges;
-};
-
 struct MeshUVVert {
-  MeshVertex *vertex;
+  int vertex;
   float2 uv;
   int64_t loop;
 };
 
 struct MeshEdge {
-  MeshVertex *vert1;
-  MeshVertex *vert2;
-  Vector<MeshPrimitive *> primitives;
+  int vert1;
+  int vert2;
+};
+
+class VertToEdgeMap {
+  Array<Vector<int>> edges_of_vert_;
+
+ public:
+  VertToEdgeMap() = delete;
+  VertToEdgeMap(const int verts_num)
+  {
+    edges_of_vert_.reinitialize(verts_num);
+  }
+
+  void add(const int edge_i, const int v1, const int v2)
+  {
+    edges_of_vert_[v1].append(edge_i);
+    edges_of_vert_[v2].append(edge_i);
+  }
+  Span<int> operator[](const int vert_i) const
+  {
+    return edges_of_vert_[vert_i];
+  }
+};
+
+class EdgeToPrimitiveMap {
+  Array<Vector<int>> primitives_of_edge_;
+
+ public:
+  EdgeToPrimitiveMap() = delete;
+  EdgeToPrimitiveMap(const int edges_num)
+  {
+    primitives_of_edge_.reinitialize(edges_num);
+  }
+
+  void add(const int primitive_i, const int edge_i)
+  {
+    primitives_of_edge_[edge_i].append(primitive_i);
+  }
+  Span<int> operator[](const int edge_i) const
+  {
+    return primitives_of_edge_[edge_i];
+  }
 };
 
 /** Represents a triangle in 3d space (MLoopTri). */
 struct MeshPrimitive {
   int64_t index;
   int64_t poly;
-  Vector<MeshEdge *, 3> edges;
+  Vector<int, 3> edges;
   Vector<MeshUVVert, 3> vertices;
 
-  /**
-   * UV island this primitive belongs to. This is used to speed up the initial uv island
-   * extraction and should not be used afterwards.
-   */
-  int64_t uv_island_id;
-
   /** Get the vertex that is not given. Both given vertices must be part of the MeshPrimitive. */
-  MeshUVVert *get_other_uv_vertex(const MeshVertex *v1, const MeshVertex *v2);
+  int get_other_uv_vertex(const int v1, const int v2) const;
 
   /** Get the UV bounds for this MeshPrimitive. */
   rctf uv_bounds() const;
 
   /** Is the given MeshPrimitive sharing an edge. */
-  bool has_shared_uv_edge(const MeshPrimitive *other) const;
+  bool has_shared_uv_edge(const MeshPrimitive &other) const;
 };
 
 /**
@@ -97,9 +127,17 @@ struct MeshData {
   const Span<MLoop> loops;
   const Span<MLoopUV> mloopuv;
 
-  Vector<MeshPrimitive> primitives;
+  VertToEdgeMap vert_to_edge_map;
+
   Vector<MeshEdge> edges;
-  Vector<MeshVertex> vertices;
+  EdgeToPrimitiveMap edge_to_primitive_map;
+
+  Vector<MeshPrimitive> primitives;
+  /**
+   * UV island each primitive belongs to. This is used to speed up the initial uv island
+   * extraction and should not be used afterwards.
+   */
+  Array<int> uv_island_ids;
   /** Total number of found uv islands. */
   int64_t uv_island_len;
 
@@ -111,7 +149,7 @@ struct MeshData {
 };
 
 struct UVVertex {
-  MeshVertex *vertex;
+  int vertex;
   /* Position in uv space. */
   float2 uv;
 
@@ -131,7 +169,7 @@ struct UVEdge {
   std::array<UVVertex *, 2> vertices;
   Vector<UVPrimitive *, 2> uv_primitives;
 
-  UVVertex *get_other_uv_vertex(const MeshVertex *vertex);
+  UVVertex *get_other_uv_vertex(const int vertex_index);
   bool has_shared_edge(const MeshUVVert &v1, const MeshUVVert &v2) const;
   bool has_shared_edge(const UVEdge &other) const;
   bool has_same_vertices(const MeshEdge &edge) const;
@@ -139,7 +177,7 @@ struct UVEdge {
 
  private:
   bool has_shared_edge(const UVVertex &v1, const UVVertex &v2) const;
-  bool has_same_vertices(const MeshVertex &vert1, const MeshVertex &vert2) const;
+  bool has_same_vertices(const int v1, const int v2) const;
   bool has_same_uv_vertices(const UVEdge &other) const;
 };
 
@@ -147,10 +185,10 @@ struct UVPrimitive {
   /**
    * Index of the primitive in the original mesh.
    */
-  MeshPrimitive *primitive;
+  const int primitive_i;
   Vector<UVEdge *, 3> edges;
 
-  explicit UVPrimitive(MeshPrimitive *primitive);
+  explicit UVPrimitive(const int primitive_i);
 
   Vector<std::pair<UVEdge *, UVEdge *>> shared_edges(UVPrimitive &other);
   bool has_shared_edge(const UVPrimitive &other) const;
@@ -159,14 +197,14 @@ struct UVPrimitive {
   /**
    * Get the UVVertex in the order that the verts are ordered in the MeshPrimitive.
    */
-  const UVVertex *get_uv_vertex(const uint8_t mesh_vert_index) const;
+  const UVVertex *get_uv_vertex(const MeshData &mesh_data, const uint8_t mesh_vert_index) const;
 
   /**
    * Get the UVEdge that share the given uv coordinates.
    * Will assert when no UVEdge found.
    */
   UVEdge *get_uv_edge(const float2 uv1, const float2 uv2) const;
-  UVEdge *get_uv_edge(const MeshVertex *v1, const MeshVertex *v2) const;
+  UVEdge *get_uv_edge(const int v1, const int v2) const;
 
   const bool contains_uv_vertex(const UVVertex *uv_vertex) const;
   const UVVertex *get_other_uv_vertex(const UVVertex *v1, const UVVertex *v2) const;
@@ -266,7 +304,9 @@ struct UVIsland {
   /** Initialize the border attribute. */
   void extract_borders();
   /** Iterative extend border to fit the mask. */
-  void extend_border(const UVIslandsMask &mask, const short island_index);
+  void extend_border(const MeshData &mesh_data,
+                     const UVIslandsMask &mask,
+                     const short island_index);
 
  private:
   void append(const UVPrimitive &primitive);
@@ -280,10 +320,10 @@ struct UVIsland {
 struct UVIslands {
   Vector<UVIsland> islands;
 
-  explicit UVIslands(MeshData &mesh_data);
+  explicit UVIslands(const MeshData &mesh_data);
 
   void extract_borders();
-  void extend_borders(const UVIslandsMask &islands_mask);
+  void extend_borders(const MeshData &mesh_data, const UVIslandsMask &islands_mask);
 };
 
 /** Mask to find the index of the UVIsland for a given UV coordinate. */
@@ -324,7 +364,7 @@ struct UVIslandsMask {
    * Add the given UVIslands to the mask. Tiles should be added beforehand using the 'add_tile'
    * method.
    */
-  void add(const UVIslands &islands);
+  void add(const MeshData &mesh_data, const UVIslands &islands);
 
   void dilate(int max_iterations);
 };

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later
  * Copyright 2022 Blender Foundation. All rights reserved. */
 
+#include "BKE_attribute.hh"
 #include "BKE_customdata.h"
 #include "BKE_mesh.h"
 #include "BKE_mesh_mapping.h"
@@ -106,9 +107,9 @@ static void update_geom_primitives(PBVH &pbvh, const uv_islands::MeshData &mesh_
   PBVHData &pbvh_data = BKE_pbvh_pixels_data_get(pbvh);
   pbvh_data.clear_data();
   for (const uv_islands::MeshPrimitive &mesh_primitive : mesh_data.primitives) {
-    pbvh_data.geom_primitives.append(int3(mesh_primitive.vertices[0].vertex->v,
-                                          mesh_primitive.vertices[1].vertex->v,
-                                          mesh_primitive.vertices[2].vertex->v));
+    pbvh_data.geom_primitives.append(int3(mesh_primitive.vertices[0].vertex,
+                                          mesh_primitive.vertices[1].vertex,
+                                          mesh_primitive.vertices[2].vertex));
   }
 }
 
@@ -134,7 +135,7 @@ struct UVPrimitiveLookup {
       for (VectorList<uv_islands::UVPrimitive>::UsedVector &uv_primitives :
            uv_island.uv_primitives) {
         for (uv_islands::UVPrimitive &uv_primitive : uv_primitives) {
-          lookup[uv_primitive.primitive->index].append_as(Entry(&uv_primitive, uv_island_index));
+          lookup[uv_primitive.primitive_i].append_as(Entry(&uv_primitive, uv_island_index));
         }
       }
       uv_island_index++;
@@ -143,6 +144,7 @@ struct UVPrimitiveLookup {
 };
 
 struct EncodePixelsUserData {
+  const uv_islands::MeshData *mesh_data;
   Image *image;
   ImageUser *image_user;
   PBVH *pbvh;
@@ -158,6 +160,7 @@ static void do_encode_pixels(void *__restrict userdata,
                              const TaskParallelTLS *__restrict UNUSED(tls))
 {
   EncodePixelsUserData *data = static_cast<EncodePixelsUserData *>(userdata);
+  const uv_islands::MeshData &mesh_data = *data->mesh_data;
   Image *image = data->image;
   ImageUser image_user = *data->image_user;
   PBVHNode *node = (*data->nodes)[n];
@@ -183,9 +186,9 @@ static void do_encode_pixels(void *__restrict userdata,
            data->uv_primitive_lookup->lookup[geom_prim_index]) {
         uv_islands::UVBorder uv_border = entry.uv_primitive->extract_border();
         float2 uvs[3] = {
-            entry.uv_primitive->get_uv_vertex(0)->uv - tile_offset,
-            entry.uv_primitive->get_uv_vertex(1)->uv - tile_offset,
-            entry.uv_primitive->get_uv_vertex(2)->uv - tile_offset,
+            entry.uv_primitive->get_uv_vertex(mesh_data, 0)->uv - tile_offset,
+            entry.uv_primitive->get_uv_vertex(mesh_data, 1)->uv - tile_offset,
+            entry.uv_primitive->get_uv_vertex(mesh_data, 2)->uv - tile_offset,
         };
         const float minv = clamp_f(min_fff(uvs[0].y, uvs[1].y, uvs[2].y), 0.0f, 1.0f);
         const int miny = floor(minv * image_buffer->y);
@@ -362,9 +365,9 @@ static void update_pixels(PBVH *pbvh, Mesh *mesh, Image *image, ImageUser *image
   }
 
   uv_islands::MeshData mesh_data({pbvh->looptri, pbvh->totprim},
-                                 {pbvh->mloop, pbvh->totprim},
+                                 {pbvh->mloop, mesh->totloop},
                                  pbvh->totvert,
-                                 {ldata_uv, pbvh->totprim});
+                                 {ldata_uv, mesh->totloop});
   uv_islands::UVIslands islands(mesh_data);
 
   uv_islands::UVIslandsMask uv_masks;
@@ -380,16 +383,17 @@ static void update_pixels(PBVH *pbvh, Mesh *mesh, Image *image, ImageUser *image
                       ushort2(tile_buffer->x, tile_buffer->y));
     BKE_image_release_ibuf(image, tile_buffer, nullptr);
   }
-  uv_masks.add(islands);
+  uv_masks.add(mesh_data, islands);
   uv_masks.dilate(image->seamfix_iter);
 
   islands.extract_borders();
-  islands.extend_borders(uv_masks);
+  islands.extend_borders(mesh_data, uv_masks);
   update_geom_primitives(*pbvh, mesh_data);
 
   UVPrimitiveLookup uv_primitive_lookup(mesh_data.looptris.size(), islands);
 
   EncodePixelsUserData user_data;
+  user_data.mesh_data = &mesh_data;
   user_data.pbvh = pbvh;
   user_data.image = image;
   user_data.image_user = image_user;
