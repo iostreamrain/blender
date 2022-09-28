@@ -96,7 +96,6 @@ class EdgeToPrimitiveMap {
 
 /** Represents a triangle in 3d space (MLoopTri). */
 struct MeshPrimitive {
-  int64_t index;
   int64_t poly;
   Vector<int, 3> edges;
   Vector<int, 3> loops;

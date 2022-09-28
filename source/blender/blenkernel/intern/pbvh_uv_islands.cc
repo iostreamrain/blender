@@ -106,7 +106,6 @@ static void mesh_data_init_primitives(MeshData &mesh_data)
   for (int64_t i = 0; i < mesh_data.looptris.size(); i++) {
     const MLoopTri &tri = mesh_data.looptris[i];
     MeshPrimitive primitive;
-    primitive.index = i;
     primitive.poly = tri.poly;
 
     for (int j = 0; j < 3; j++) {
