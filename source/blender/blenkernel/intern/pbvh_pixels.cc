@@ -107,9 +107,9 @@ static void update_geom_primitives(PBVH &pbvh, const uv_islands::MeshData &mesh_
   PBVHData &pbvh_data = BKE_pbvh_pixels_data_get(pbvh);
   pbvh_data.clear_data();
   for (const uv_islands::MeshPrimitive &mesh_primitive : mesh_data.primitives) {
-    pbvh_data.geom_primitives.append(int3(mesh_primitive.vertices[0].vertex,
-                                          mesh_primitive.vertices[1].vertex,
-                                          mesh_primitive.vertices[2].vertex));
+    pbvh_data.geom_primitives.append(int3(mesh_data.loops[mesh_primitive.loops[0]].v,
+                                          mesh_data.loops[mesh_primitive.loops[1]].v,
+                                          mesh_data.loops[mesh_primitive.loops[2]].v));
   }
 }
 
@@ -149,7 +149,6 @@ struct EncodePixelsUserData {
   ImageUser *image_user;
   PBVH *pbvh;
   Vector<PBVHNode *> *nodes;
-  const MLoopUV *ldata_uv;
   const uv_islands::UVIslandsMask *uv_masks;
   /** Lookup to retrieve the UV primitives based on the primitive index. */
   const UVPrimitiveLookup *uv_primitive_lookup;
@@ -358,16 +357,16 @@ static void update_pixels(PBVH *pbvh, Mesh *mesh, Image *image, ImageUser *image
     return;
   }
 
-  const MLoopUV *ldata_uv = static_cast<const MLoopUV *>(
-      CustomData_get_layer(&mesh->ldata, CD_MLOOPUV));
-  if (ldata_uv == nullptr) {
+  const StringRef active_uv_name = CustomData_get_active_layer_name(&mesh->ldata, CD_MLOOPUV);
+  if (active_uv_name.is_empty()) {
     return;
   }
 
-  uv_islands::MeshData mesh_data({pbvh->looptri, pbvh->totprim},
-                                 {pbvh->mloop, mesh->totloop},
-                                 pbvh->totvert,
-                                 {ldata_uv, mesh->totloop});
+  const AttributeAccessor attributes = mesh->attributes();
+  const VArraySpan<float2> uv_map = attributes.lookup<float2>(active_uv_name, ATTR_DOMAIN_CORNER);
+
+  uv_islands::MeshData mesh_data(
+      {pbvh->looptri, pbvh->totprim}, {pbvh->mloop, mesh->totloop}, pbvh->totvert, uv_map);
   uv_islands::UVIslands islands(mesh_data);
 
   uv_islands::UVIslandsMask uv_masks;
@@ -397,7 +396,6 @@ static void update_pixels(PBVH *pbvh, Mesh *mesh, Image *image, ImageUser *image
   user_data.pbvh = pbvh;
   user_data.image = image;
   user_data.image_user = image_user;
-  user_data.ldata_uv = ldata_uv;
   user_data.nodes = &nodes_to_update;
   user_data.uv_primitive_lookup = &uv_primitive_lookup;
   user_data.uv_masks = &uv_masks;

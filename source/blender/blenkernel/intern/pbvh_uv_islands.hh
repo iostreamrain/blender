@@ -45,13 +45,8 @@ struct UVIslands;
 struct UVIslandsMask;
 struct UVPrimitive;
 struct UVPrimitiveEdge;
+struct MeshData;
 struct UVVertex;
-
-struct MeshUVVert {
-  int vertex;
-  float2 uv;
-  int64_t loop;
-};
 
 struct MeshEdge {
   int vert1;
@@ -104,16 +99,16 @@ struct MeshPrimitive {
   int64_t index;
   int64_t poly;
   Vector<int, 3> edges;
-  Vector<MeshUVVert, 3> vertices;
+  Vector<int, 3> loops;
 
   /** Get the vertex that is not given. Both given vertices must be part of the MeshPrimitive. */
-  int get_other_uv_vertex(const int v1, const int v2) const;
+  int get_other_uv_vertex(const MeshData &mesh_data, const int v1, const int v2) const;
 
   /** Get the UV bounds for this MeshPrimitive. */
-  rctf uv_bounds() const;
+  rctf uv_bounds(Span<float2> uv_map) const;
 
   /** Is the given MeshPrimitive sharing an edge. */
-  bool has_shared_uv_edge(const MeshPrimitive &other) const;
+  bool has_shared_uv_edge(Span<float2> uv_map, const MeshPrimitive &other) const;
 };
 
 /**
@@ -125,7 +120,7 @@ struct MeshData {
   const Span<MLoopTri> looptris;
   const int64_t verts_num;
   const Span<MLoop> loops;
-  const Span<MLoopUV> mloopuv;
+  const Span<float2> uv_map;
 
   VertToEdgeMap vert_to_edge_map;
 
@@ -142,10 +137,10 @@ struct MeshData {
   int64_t uv_island_len;
 
  public:
-  explicit MeshData(const Span<MLoopTri> looptris,
-                    const Span<MLoop> loops,
+  explicit MeshData(Span<MLoopTri> looptris,
+                    Span<MLoop> loops,
                     const int verts_num,
-                    const Span<MLoopUV> mloopuv);
+                    Span<float2> uv_map);
 };
 
 struct UVVertex {
@@ -162,7 +157,7 @@ struct UVVertex {
   } flags;
 
   explicit UVVertex();
-  explicit UVVertex(const MeshUVVert &vert);
+  explicit UVVertex(const MeshData &mesh_data, const int loop);
 };
 
 struct UVEdge {
@@ -170,7 +165,7 @@ struct UVEdge {
   Vector<UVPrimitive *, 2> uv_primitives;
 
   UVVertex *get_other_uv_vertex(const int vertex_index);
-  bool has_shared_edge(const MeshUVVert &v1, const MeshUVVert &v2) const;
+  bool has_shared_edge(Span<float2> uv_map, const int loop_1, const int loop_2) const;
   bool has_shared_edge(const UVEdge &other) const;
   bool has_same_vertices(const MeshEdge &edge) const;
   bool is_border_edge() const;
@@ -192,7 +187,7 @@ struct UVPrimitive {
 
   Vector<std::pair<UVEdge *, UVEdge *>> shared_edges(UVPrimitive &other);
   bool has_shared_edge(const UVPrimitive &other) const;
-  bool has_shared_edge(const MeshPrimitive &primitive) const;
+  bool has_shared_edge(Span<float2> uv_map, const MeshPrimitive &primitive) const;
 
   /**
    * Get the UVVertex in the order that the verts are ordered in the MeshPrimitive.
@@ -313,7 +308,7 @@ struct UVIsland {
 
  public:
   bool has_shared_edge(const UVPrimitive &primitive) const;
-  bool has_shared_edge(const MeshPrimitive &primitive) const;
+  bool has_shared_edge(Span<float2> uv_map, const MeshPrimitive &primitive) const;
   void extend_border(const UVPrimitive &primitive);
 };
 
