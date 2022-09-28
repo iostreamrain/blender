@@ -97,8 +97,8 @@ class EdgeToPrimitiveMap {
 /** Represents a triangle in 3d space (MLoopTri). */
 struct MeshPrimitive {
   int64_t poly;
-  Vector<int, 3> edges;
-  Vector<int, 3> loops;
+  std::array<int, 3> edges;
+  std::array<int, 3> loops;
 
   /** Get the vertex that is not given. Both given vertices must be part of the MeshPrimitive. */
   int get_other_uv_vertex(const MeshData &mesh_data, const int v1, const int v2) const;

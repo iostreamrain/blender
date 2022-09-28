@@ -107,10 +107,7 @@ static void mesh_data_init_primitives(MeshData &mesh_data)
     const MLoopTri &tri = mesh_data.looptris[i];
     MeshPrimitive primitive;
     primitive.poly = tri.poly;
-
-    for (int j = 0; j < 3; j++) {
-      primitive.loops.append(tri.tri[j]);
-    }
+    std::copy(std::begin(tri.tri), std::end(tri.tri), std::begin(primitive.loops));
     mesh_data.primitives.append(primitive);
   }
 }
@@ -122,6 +119,7 @@ static void mesh_data_init_edges(MeshData &mesh_data)
   for (int64_t i = 0; i < mesh_data.looptris.size(); i++) {
     const MLoopTri &tri = mesh_data.looptris[i];
     MeshPrimitive &primitive = mesh_data.primitives[i];
+    Vector<int, 3> edges;
     for (int j = 0; j < 3; j++) {
       int v1 = mesh_data.loops[tri.tri[j]].v;
       int v2 = mesh_data.loops[tri.tri[(j + 1) % 3]].v;
@@ -142,8 +140,9 @@ static void mesh_data_init_edges(MeshData &mesh_data)
         mesh_data.vert_to_edge_map.add(edge_index, v1, v2);
       }
 
-      primitive.edges.append(edge_index);
+      edges.append(edge_index);
     }
+    std::copy(std::begin(edges), std::end(edges), std::begin(primitive.edges));
   }
   /* Build edge to neighboring triangle map. */
   mesh_data.edge_to_primitive_map = EdgeToPrimitiveMap(mesh_data.edges.size());
@@ -1136,7 +1135,7 @@ bool UVPrimitive::has_shared_edge(const UVPrimitive &other) const
 bool UVPrimitive::has_shared_edge(const Span<float2> uv_map, const MeshPrimitive &primitive) const
 {
   for (const UVEdge *uv_edge : edges) {
-    int loop_1 = primitive.loops.last();
+    int loop_1 = primitive.loops[2];
     for (int i = 0; i < primitive.loops.size(); i++) {
       int loop_2 = primitive.loops[i];
       if (uv_edge->has_shared_edge(uv_map, loop_1, loop_2)) {
