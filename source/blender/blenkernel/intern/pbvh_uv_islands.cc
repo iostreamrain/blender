@@ -28,15 +28,24 @@ static void uv_primitive_append_to_uv_vertices(UVPrimitive &uv_primitive)
 }
 
 /* -------------------------------------------------------------------- */
-/** \name MeshPrimitive
+/** \name Mesh Primitives
  * \{ */
 
-int MeshPrimitive::get_other_uv_vertex(const MeshData &mesh_data, const int v1, const int v2) const
+int primitive_get_other_uv_vertex(const MeshData &mesh_data,
+                                  const MLoopTri &looptri,
+                                  const int v1,
+                                  const int v2)
 {
   const Span<MLoop> mesh_loops = mesh_data.loops;
-  BLI_assert(ELEM(v1, mesh_loops[loops[0]].v, mesh_loops[loops[1]].v, mesh_loops[loops[2]].v));
-  BLI_assert(ELEM(v2, mesh_loops[loops[0]].v, mesh_loops[loops[1]].v, mesh_loops[loops[2]].v));
-  for (const int loop : loops) {
+  BLI_assert(ELEM(v1,
+                  mesh_loops[looptri.tri[0]].v,
+                  mesh_loops[looptri.tri[1]].v,
+                  mesh_loops[looptri.tri[2]].v));
+  BLI_assert(ELEM(v2,
+                  mesh_loops[looptri.tri[0]].v,
+                  mesh_loops[looptri.tri[1]].v,
+                  mesh_loops[looptri.tri[2]].v));
+  for (const int loop : looptri.tri) {
     const int vert = mesh_loops[loop].v;
     if (vert != v1 && vert != v2) {
       return vert;
@@ -45,11 +54,13 @@ int MeshPrimitive::get_other_uv_vertex(const MeshData &mesh_data, const int v1, 
   return -1;
 }
 
-bool MeshPrimitive::has_shared_uv_edge(const Span<float2> uv_map, const MeshPrimitive &other) const
+bool primitive_has_shared_uv_edge(const Span<float2> uv_map,
+                                  const MLoopTri &looptri,
+                                  const MLoopTri &other)
 {
   int shared_uv_verts = 0;
-  for (const int loop : loops) {
-    for (const int other_loop : other.loops) {
+  for (const int loop : looptri.tri) {
+    for (const int other_loop : other.tri) {
       if (uv_map[loop] == uv_map[other_loop]) {
         shared_uv_verts += 1;
       }
@@ -58,25 +69,21 @@ bool MeshPrimitive::has_shared_uv_edge(const Span<float2> uv_map, const MeshPrim
   return shared_uv_verts >= 2;
 }
 
-static int get_uv_loop(const MeshData &mesh_data,
-                       const MeshPrimitive &mesh_primitive,
-                       const int vert)
+static int get_uv_loop(const MeshData &mesh_data, const MLoopTri &looptri, const int vert)
 {
-  for (const int loop : mesh_primitive.loops) {
+  for (const int loop : looptri.tri) {
     if (mesh_data.loops[loop].v == vert) {
       return loop;
     }
   }
   BLI_assert_unreachable();
-  return mesh_primitive.loops[0];
+  return looptri.tri[0];
 }
 
-static bool has_vertex(const MeshData &mesh_data,
-                       const MeshPrimitive &mesh_primitive,
-                       const int vert)
+static bool has_vertex(const MeshData &mesh_data, const MLoopTri &looptri, const int vert)
 {
   for (int i = 0; i < 3; i++) {
-    const int vert_i = mesh_data.loops[mesh_primitive.loops[i]].v;
+    const int vert_i = mesh_data.loops[looptri.tri[i]].v;
     if (vert_i == vert) {
       return true;
     }
@@ -84,11 +91,11 @@ static bool has_vertex(const MeshData &mesh_data,
   return false;
 }
 
-rctf MeshPrimitive::uv_bounds(const Span<float2> uv_map) const
+rctf primitive_uv_bounds(const MLoopTri &looptri, const Span<float2> uv_map)
 {
   rctf result;
   BLI_rctf_init_minmax(&result);
-  for (const int loop : loops) {
+  for (const int loop : looptri.tri) {
     BLI_rctf_do_minmax_v(&result, uv_map[loop]);
   }
   return result;
@@ -100,25 +107,12 @@ rctf MeshPrimitive::uv_bounds(const Span<float2> uv_map) const
 /** \name MeshData
  * \{ */
 
-static void mesh_data_init_primitives(MeshData &mesh_data)
-{
-  mesh_data.primitives.reserve(mesh_data.looptris.size());
-  for (int64_t i = 0; i < mesh_data.looptris.size(); i++) {
-    const MLoopTri &tri = mesh_data.looptris[i];
-    MeshPrimitive primitive;
-    primitive.poly = tri.poly;
-    std::copy(std::begin(tri.tri), std::end(tri.tri), std::begin(primitive.loops));
-    mesh_data.primitives.append(primitive);
-  }
-}
-
 static void mesh_data_init_edges(MeshData &mesh_data)
 {
   mesh_data.edges.reserve(mesh_data.looptris.size() * 2);
   EdgeHash *eh = BLI_edgehash_new_ex(__func__, mesh_data.looptris.size() * 3);
   for (int64_t i = 0; i < mesh_data.looptris.size(); i++) {
     const MLoopTri &tri = mesh_data.looptris[i];
-    MeshPrimitive &primitive = mesh_data.primitives[i];
     Vector<int, 3> edges;
     for (int j = 0; j < 3; j++) {
       int v1 = mesh_data.loops[tri.tri[j]].v;
@@ -142,13 +136,12 @@ static void mesh_data_init_edges(MeshData &mesh_data)
 
       edges.append(edge_index);
     }
-    std::copy(std::begin(edges), std::end(edges), std::begin(primitive.edges));
+    mesh_data.primitive_to_edge_map.add(edges, i);
   }
   /* Build edge to neighboring triangle map. */
   mesh_data.edge_to_primitive_map = EdgeToPrimitiveMap(mesh_data.edges.size());
-  for (const int prim_i : mesh_data.primitives.index_range()) {
-    const MeshPrimitive &primitive = mesh_data.primitives[prim_i];
-    for (const int edge_i : primitive.edges) {
+  for (const int prim_i : mesh_data.looptris.index_range()) {
+    for (const int edge_i : mesh_data.primitive_to_edge_map[prim_i]) {
       mesh_data.edge_to_primitive_map.add(prim_i, edge_i);
     }
   }
@@ -165,8 +158,7 @@ static void extract_uv_neighbors(const MeshData &mesh_data,
                                  const int primitive_i,
                                  Vector<int> &prims_to_add)
 {
-  const MeshPrimitive &primitive = mesh_data.primitives[primitive_i];
-  for (const int edge : primitive.edges) {
+  for (const int edge : mesh_data.primitive_to_edge_map[primitive_i]) {
     for (const int other_primitive_i : mesh_data.edge_to_primitive_map[edge]) {
       if (primitive_i == other_primitive_i) {
         continue;
@@ -175,8 +167,9 @@ static void extract_uv_neighbors(const MeshData &mesh_data,
         continue;
       }
 
-      const MeshPrimitive &other_primitive = mesh_data.primitives[other_primitive_i];
-      if (primitive.has_shared_uv_edge(mesh_data.uv_map, other_primitive)) {
+      if (primitive_has_shared_uv_edge(mesh_data.uv_map,
+                                       mesh_data.looptris[primitive_i],
+                                       mesh_data.looptris[other_primitive_i])) {
         prims_to_add.append(other_primitive_i);
       }
     }
@@ -185,12 +178,12 @@ static void extract_uv_neighbors(const MeshData &mesh_data,
 
 static int mesh_data_init_primitive_uv_island_ids(MeshData &mesh_data)
 {
-  mesh_data.uv_island_ids.reinitialize(mesh_data.primitives.size());
+  mesh_data.uv_island_ids.reinitialize(mesh_data.looptris.size());
   mesh_data.uv_island_ids.fill(INVALID_UV_ISLAND_ID);
 
   int uv_island_id = 0;
   Vector<int> prims_to_add;
-  for (const int primitive_i : mesh_data.primitives.index_range()) {
+  for (const int primitive_i : mesh_data.looptris.index_range()) {
     /* Early exit when uv island id is already extracted during uv neighbor extractions. */
     if (mesh_data.uv_island_ids[primitive_i] != INVALID_UV_ISLAND_ID) {
       continue;
@@ -210,7 +203,6 @@ static int mesh_data_init_primitive_uv_island_ids(MeshData &mesh_data)
 
 static void mesh_data_init(MeshData &mesh_data)
 {
-  mesh_data_init_primitives(mesh_data);
   mesh_data_init_edges(mesh_data);
   mesh_data.uv_island_len = mesh_data_init_primitive_uv_island_ids(mesh_data);
 }
@@ -224,7 +216,8 @@ MeshData::MeshData(const Span<MLoopTri> looptris,
       loops(loops),
       uv_map(uv_map),
       vert_to_edge_map(verts_num),
-      edge_to_primitive_map(0)
+      edge_to_primitive_map(0),
+      primitive_to_edge_map(looptris.size())
 {
   mesh_data_init(*this);
 }
@@ -393,11 +386,11 @@ bool UVIsland::has_shared_edge(const UVPrimitive &primitive) const
   return false;
 }
 
-bool UVIsland::has_shared_edge(const Span<float2> uv_map, const MeshPrimitive &primitive) const
+bool UVIsland::has_shared_edge(const MeshData &mesh_data, const const int primitive_i) const
 {
   for (const VectorList<UVPrimitive>::UsedVector &primitives : uv_primitives) {
     for (const UVPrimitive &prim : primitives) {
-      if (prim.has_shared_edge(uv_map, primitive)) {
+      if (prim.has_shared_edge(mesh_data, primitive_i)) {
         return true;
       }
     }
@@ -421,10 +414,10 @@ static UVPrimitive *add_primitive(const MeshData &mesh_data,
                                   const int primitive_i)
 {
   UVPrimitive uv_primitive(primitive_i);
-  const MeshPrimitive &primitive = mesh_data.primitives[primitive_i];
+  const MLoopTri &primitive = mesh_data.looptris[primitive_i];
   uv_island.uv_primitives.append(uv_primitive);
   UVPrimitive *uv_primitive_ptr = &uv_island.uv_primitives.last();
-  for (const int edge_i : primitive.edges) {
+  for (const int edge_i : mesh_data.primitive_to_edge_map[primitive_i]) {
     const MeshEdge &edge = mesh_data.edges[edge_i];
     const int loop_1 = get_uv_loop(mesh_data, primitive, edge.vert1);
     const int loop_2 = get_uv_loop(mesh_data, primitive, edge.vert2);
@@ -502,7 +495,7 @@ static std::optional<UVBorderCorner> sharpest_border_corner(UVIsland &island)
 
 /** The inner edge of a fan. */
 struct InnerEdge {
-  const MeshPrimitive *primitive;
+  const MLoopTri *primitive;
   /* UVs order are already applied. So uvs[0] mathes primitive->vertices[vert_order[0]]/ */
   float2 uvs[3];
   int vert_order[3];
@@ -511,24 +504,24 @@ struct InnerEdge {
     bool found : 1;
   } flags;
 
-  InnerEdge(const MeshData &mesh_data, const MeshPrimitive *primitive, int vertex)
+  InnerEdge(const MeshData &mesh_data, const MLoopTri *primitive, int vertex)
       : primitive(primitive)
   {
     flags.found = false;
 
     /* Reorder so the first edge starts with the given vertex. */
-    if (mesh_data.loops[primitive->loops[1]].v == vertex) {
+    if (mesh_data.loops[primitive->tri[1]].v == vertex) {
       vert_order[0] = 1;
       vert_order[1] = 2;
       vert_order[2] = 0;
     }
-    else if (mesh_data.loops[primitive->loops[2]].v == vertex) {
+    else if (mesh_data.loops[primitive->tri[2]].v == vertex) {
       vert_order[0] = 2;
       vert_order[1] = 0;
       vert_order[2] = 1;
     }
     else {
-      BLI_assert(mesh_data.loops[primitive->loops[0]].v == vertex);
+      BLI_assert(mesh_data.loops[primitive->tri[0]].v == vertex);
       vert_order[0] = 0;
       vert_order[1] = 1;
       vert_order[2] = 2;
@@ -566,14 +559,14 @@ struct Fan {
           continue;
         }
 
-        const MeshPrimitive &other_primitive = mesh_data.primitives[other_primitive_i];
+        const MLoopTri &other_looptri = mesh_data.looptris[other_primitive_i];
 
-        for (const int edge_i : other_primitive.edges) {
+        for (const int edge_i : mesh_data.primitive_to_edge_map[other_primitive_i]) {
           const MeshEdge &edge = mesh_data.edges[edge_i];
           if (edge_i == current_edge || (edge.vert1 != vertex && edge.vert2 != vertex)) {
             continue;
           }
-          inner_edges.append(InnerEdge(mesh_data, &other_primitive, vertex));
+          inner_edges.append(InnerEdge(mesh_data, &other_looptri, vertex));
           current_edge = edge_i;
           previous_primitive = other_primitive_i;
           stop = true;
@@ -605,8 +598,8 @@ struct Fan {
   {
     for (InnerEdge &fan_edge : inner_edges) {
       fan_edge.flags.found = false;
-      const int v0 = mesh_data.loops[fan_edge.primitive->loops[fan_edge.vert_order[0]]].v;
-      const int v1 = mesh_data.loops[fan_edge.primitive->loops[fan_edge.vert_order[1]]].v;
+      const int v0 = mesh_data.loops[fan_edge.primitive->tri[fan_edge.vert_order[0]]].v;
+      const int v1 = mesh_data.loops[fan_edge.primitive->tri[fan_edge.vert_order[1]]].v;
       for (const UVEdge *edge : uv_vertex.uv_edges) {
         const int e0 = edge->vertices[0]->vertex;
         const int e1 = edge->vertices[1]->vertex;
@@ -621,9 +614,9 @@ struct Fan {
   void init_uv_coordinates(const MeshData &mesh_data, UVVertex &uv_vertex)
   {
     for (InnerEdge &fan_edge : inner_edges) {
-      int other_v = mesh_data.loops[fan_edge.primitive->loops[fan_edge.vert_order[0]]].v;
+      int other_v = mesh_data.loops[fan_edge.primitive->tri[fan_edge.vert_order[0]]].v;
       if (other_v == uv_vertex.vertex) {
-        other_v = mesh_data.loops[fan_edge.primitive->loops[fan_edge.vert_order[1]]].v;
+        other_v = mesh_data.loops[fan_edge.primitive->tri[fan_edge.vert_order[1]]].v;
       }
 
       for (UVEdge *edge : uv_vertex.uv_edges) {
@@ -652,21 +645,21 @@ static void add_uv_primitive_shared_uv_edge(const MeshData &mesh_data,
                                             const int mesh_primitive_i)
 {
   UVPrimitive prim1(mesh_primitive_i);
-  const MeshPrimitive &mesh_primitive = mesh_data.primitives[mesh_primitive_i];
+  const MLoopTri &looptri = mesh_data.looptris[mesh_primitive_i];
 
-  const int other_vert_i = mesh_primitive.get_other_uv_vertex(
-      mesh_data, connected_vert_1->vertex, connected_vert_2->vertex);
+  const int other_vert_i = primitive_get_other_uv_vertex(
+      mesh_data, looptri, connected_vert_1->vertex, connected_vert_2->vertex);
   UVVertex vert_template;
   vert_template.uv = uv_unconnected;
   vert_template.vertex = other_vert_i;
   UVVertex *vert_ptr = island.lookup_or_create(vert_template);
 
-  const int loop_1 = get_uv_loop(mesh_data, mesh_primitive, connected_vert_1->vertex);
+  const int loop_1 = get_uv_loop(mesh_data, looptri, connected_vert_1->vertex);
   vert_template.uv = connected_vert_1->uv;
   vert_template.vertex = mesh_data.loops[loop_1].v;
   UVVertex *vert_1_ptr = island.lookup_or_create(vert_template);
 
-  const int loop_2 = get_uv_loop(mesh_data, mesh_primitive, connected_vert_2->vertex);
+  const int loop_2 = get_uv_loop(mesh_data, looptri, connected_vert_2->vertex);
   vert_template.uv = connected_vert_2->uv;
   vert_template.vertex = mesh_data.loops[loop_2].v;
   UVVertex *vert_2_ptr = island.lookup_or_create(vert_template);
@@ -690,9 +683,9 @@ static int find_fill_border(const MeshData &mesh_data, const int v1, const int v
 {
   for (const int edge_i : mesh_data.vert_to_edge_map[v1]) {
     for (const int primitive_i : mesh_data.edge_to_primitive_map[edge_i]) {
-      const MeshPrimitive &primitive = mesh_data.primitives[primitive_i];
-      if (has_vertex(mesh_data, primitive, v1) && has_vertex(mesh_data, primitive, v2) &&
-          has_vertex(mesh_data, primitive, v3)) {
+      const MLoopTri &looptri = mesh_data.looptris[primitive_i];
+      if (has_vertex(mesh_data, looptri, v1) && has_vertex(mesh_data, looptri, v2) &&
+          has_vertex(mesh_data, looptri, v3)) {
         return primitive_i;
       }
     }
@@ -716,8 +709,9 @@ static int find_fill_border(const MeshData &mesh_data, UVBorderCorner &corner)
     const MeshEdge &edge = mesh_data.edges[edge_i];
     if (corner.first->edge->has_same_vertices(edge)) {
       for (const int primitive_i : mesh_data.edge_to_primitive_map[edge_i]) {
-        const MeshPrimitive &primitive = mesh_data.primitives[primitive_i];
-        const int other_vert = primitive.get_other_uv_vertex(mesh_data, edge.vert1, edge.vert2);
+        const MLoopTri &looptri = mesh_data.looptris[primitive_i];
+        const int other_vert = primitive_get_other_uv_vertex(
+            mesh_data, looptri, edge.vert1, edge.vert2);
         if (other_vert == corner.second->get_uv_vertex(1)->vertex) {
           return primitive_i;
         }
@@ -838,13 +832,13 @@ static void extend_at_vert(const MeshData &mesh_data,
             mesh_data,
             uv_vertex->vertex,
             shared_edge_vertex,
-            mesh_data.loops[segment.primitive->loops[segment.vert_order[1]]].v);
+            mesh_data.loops[segment.primitive->tri[segment.vert_order[1]]].v);
         if (fill_primitive_i == -1) {
           continue;
         }
-        const MeshPrimitive &fill_primitive = mesh_data.primitives[fill_primitive_i];
-        const int other_prim_vertex = fill_primitive.get_other_uv_vertex(
-            mesh_data, uv_vertex->vertex, shared_edge_vertex);
+        const MLoopTri &fill_primitive = mesh_data.looptris[fill_primitive_i];
+        const int other_prim_vertex = primitive_get_other_uv_vertex(
+            mesh_data, fill_primitive, uv_vertex->vertex, shared_edge_vertex);
 
         UVVertex uv_vertex_template;
         uv_vertex_template.vertex = uv_vertex->vertex;
@@ -880,9 +874,9 @@ static void extend_at_vert(const MeshData &mesh_data,
                                                     shared_edge_vertex,
                                                     corner.second->get_uv_vertex(1)->vertex);
       if (fill_primitive_i != -1) {
-        const MeshPrimitive &fill_primitive = mesh_data.primitives[fill_primitive_i];
-        const int other_prim_vertex = fill_primitive.get_other_uv_vertex(
-            mesh_data, uv_vertex->vertex, shared_edge_vertex);
+        const MLoopTri &fill_primitive = mesh_data.looptris[fill_primitive_i];
+        const int other_prim_vertex = primitive_get_other_uv_vertex(
+            mesh_data, fill_primitive, uv_vertex->vertex, shared_edge_vertex);
 
         UVVertex uv_vertex_template;
         uv_vertex_template.vertex = uv_vertex->vertex;
@@ -1132,13 +1126,14 @@ bool UVPrimitive::has_shared_edge(const UVPrimitive &other) const
   return false;
 }
 
-bool UVPrimitive::has_shared_edge(const Span<float2> uv_map, const MeshPrimitive &primitive) const
+bool UVPrimitive::has_shared_edge(const MeshData &mesh_data, const int primitive_i) const
 {
   for (const UVEdge *uv_edge : edges) {
-    int loop_1 = primitive.loops[2];
-    for (int i = 0; i < primitive.loops.size(); i++) {
-      int loop_2 = primitive.loops[i];
-      if (uv_edge->has_shared_edge(uv_map, loop_1, loop_2)) {
+    const MLoopTri &primitive = mesh_data.looptris[primitive_i];
+    int loop_1 = primitive.tri[2];
+    for (int i = 0; i < 3; i++) {
+      int loop_2 = primitive.tri[i];
+      if (uv_edge->has_shared_edge(mesh_data.uv_map, loop_1, loop_2)) {
         return true;
       }
       loop_1 = loop_2;
@@ -1153,8 +1148,8 @@ bool UVPrimitive::has_shared_edge(const Span<float2> uv_map, const MeshPrimitive
 const UVVertex *UVPrimitive::get_uv_vertex(const MeshData &mesh_data,
                                            const uint8_t mesh_vert_index) const
 {
-  const MeshPrimitive &primitive = mesh_data.primitives[this->primitive_i];
-  const int mesh_vertex = mesh_data.loops[primitive.loops[mesh_vert_index]].v;
+  const MLoopTri &looptri = mesh_data.looptris[this->primitive_i];
+  const int mesh_vertex = mesh_data.loops[looptri.tri[mesh_vert_index]].v;
   for (const UVEdge *uv_edge : edges) {
     for (const UVVertex *uv_vert : uv_edge->vertices) {
       if (uv_vert->vertex == mesh_vertex) {
@@ -1282,7 +1277,7 @@ UVIslands::UVIslands(const MeshData &mesh_data)
   for (int64_t uv_island_id = 0; uv_island_id < mesh_data.uv_island_len; uv_island_id++) {
     islands.append_as(UVIsland());
     UVIsland *uv_island = &islands.last();
-    for (const int primitive_i : mesh_data.primitives.index_range()) {
+    for (const int primitive_i : mesh_data.looptris.index_range()) {
       if (mesh_data.uv_island_ids[primitive_i] == uv_island_id) {
         add_primitive(mesh_data, *uv_island, primitive_i);
       }
@@ -1343,9 +1338,9 @@ static void add_uv_island(const MeshData &mesh_data,
 {
   for (const VectorList<UVPrimitive>::UsedVector &uv_primitives : uv_island.uv_primitives)
     for (const UVPrimitive &uv_primitive : uv_primitives) {
-      const MeshPrimitive &mesh_primitive = mesh_data.primitives[uv_primitive.primitive_i];
+      const MLoopTri &looptri = mesh_data.looptris[uv_primitive.primitive_i];
 
-      rctf uv_bounds = mesh_primitive.uv_bounds(mesh_data.uv_map);
+      rctf uv_bounds = primitive_uv_bounds(looptri, mesh_data.uv_map);
       rcti buffer_bounds;
       buffer_bounds.xmin = max_ii(
           floor((uv_bounds.xmin - tile.udim_offset.x) * tile.mask_resolution.x), 0);
@@ -1362,9 +1357,9 @@ static void add_uv_island(const MeshData &mesh_data,
         for (int x = buffer_bounds.xmin; x < buffer_bounds.xmax + 1; x++) {
           float2 uv(float(x) / tile.mask_resolution.x, float(y) / tile.mask_resolution.y);
           float3 weights;
-          barycentric_weights_v2(mesh_data.uv_map[mesh_primitive.loops[0]],
-                                 mesh_data.uv_map[mesh_primitive.loops[1]],
-                                 mesh_data.uv_map[mesh_primitive.loops[2]],
+          barycentric_weights_v2(mesh_data.uv_map[looptri.tri[0]],
+                                 mesh_data.uv_map[looptri.tri[1]],
+                                 mesh_data.uv_map[looptri.tri[2]],
                                  uv + tile.udim_offset,
                                  weights);
           if (!barycentric_inside_triangle_v2(weights)) {

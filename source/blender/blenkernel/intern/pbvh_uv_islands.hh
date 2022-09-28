@@ -38,7 +38,6 @@
 namespace blender::bke::pbvh::uv_islands {
 
 struct MeshEdge;
-struct MeshPrimitive;
 struct UVBorder;
 struct UVEdge;
 struct UVIslands;
@@ -94,20 +93,24 @@ class EdgeToPrimitiveMap {
   }
 };
 
-/** Represents a triangle in 3d space (MLoopTri). */
-struct MeshPrimitive {
-  int64_t poly;
-  std::array<int, 3> edges;
-  std::array<int, 3> loops;
+class TriangleToEdgeMap {
+  Array<std::array<int, 3>> edges_of_triangle_;
 
-  /** Get the vertex that is not given. Both given vertices must be part of the MeshPrimitive. */
-  int get_other_uv_vertex(const MeshData &mesh_data, const int v1, const int v2) const;
+ public:
+  TriangleToEdgeMap() = delete;
+  TriangleToEdgeMap(const int edges_num)
+  {
+    edges_of_triangle_.reinitialize(edges_num);
+  }
 
-  /** Get the UV bounds for this MeshPrimitive. */
-  rctf uv_bounds(Span<float2> uv_map) const;
-
-  /** Is the given MeshPrimitive sharing an edge. */
-  bool has_shared_uv_edge(Span<float2> uv_map, const MeshPrimitive &other) const;
+  void add(const Span<int> edges, const int tri_i)
+  {
+    std::copy(edges.begin(), edges.end(), edges_of_triangle_[tri_i].begin());
+  }
+  Span<int> operator[](const int tri_i) const
+  {
+    return edges_of_triangle_[tri_i];
+  }
 };
 
 /**
@@ -126,7 +129,8 @@ struct MeshData {
   Vector<MeshEdge> edges;
   EdgeToPrimitiveMap edge_to_primitive_map;
 
-  Vector<MeshPrimitive> primitives;
+  TriangleToEdgeMap primitive_to_edge_map;
+
   /**
    * UV island each primitive belongs to. This is used to speed up the initial uv island
    * extraction and should not be used afterwards.
@@ -186,7 +190,7 @@ struct UVPrimitive {
 
   Vector<std::pair<UVEdge *, UVEdge *>> shared_edges(UVPrimitive &other);
   bool has_shared_edge(const UVPrimitive &other) const;
-  bool has_shared_edge(Span<float2> uv_map, const MeshPrimitive &primitive) const;
+  bool has_shared_edge(const MeshData &mesh_data, int other_triangle_index) const;
 
   /**
    * Get the UVVertex in the order that the verts are ordered in the MeshPrimitive.
@@ -307,7 +311,7 @@ struct UVIsland {
 
  public:
   bool has_shared_edge(const UVPrimitive &primitive) const;
-  bool has_shared_edge(Span<float2> uv_map, const MeshPrimitive &primitive) const;
+  bool has_shared_edge(const MeshData &mesh_data, const int primitive_i) const;
   void extend_border(const UVPrimitive &primitive);
 };
 

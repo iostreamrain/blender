@@ -106,10 +106,10 @@ static void update_geom_primitives(PBVH &pbvh, const uv_islands::MeshData &mesh_
 {
   PBVHData &pbvh_data = BKE_pbvh_pixels_data_get(pbvh);
   pbvh_data.clear_data();
-  for (const uv_islands::MeshPrimitive &mesh_primitive : mesh_data.primitives) {
-    pbvh_data.geom_primitives.append(int3(mesh_data.loops[mesh_primitive.loops[0]].v,
-                                          mesh_data.loops[mesh_primitive.loops[1]].v,
-                                          mesh_data.loops[mesh_primitive.loops[2]].v));
+  for (const MLoopTri &looptri : mesh_data.looptris) {
+    pbvh_data.geom_primitives.append(int3(mesh_data.loops[looptri.tri[0]].v,
+                                          mesh_data.loops[looptri.tri[1]].v,
+                                          mesh_data.loops[looptri.tri[2]].v));
   }
 }
 
