@@ -60,9 +60,18 @@ typedef struct DupliObject {
   /* Particle this dupli was generated from. */
   struct ParticleSystem *particle_system;
 
+  /* Geometry set stack for instance attributes; for each level lists the
+   * geometry set and instance index within it. Some pointers may be null. */
+  int instance_idx[8]; /* MAX_DUPLI_RECUR */
+  const struct GeometrySet *instance_data[8];
+
   /* Random ID for shading */
   unsigned int random_id;
 } DupliObject;
+
+/** Attempts to look up a GeometrySet instance attribute by name; returns true if found.
+ *  If the function returns false, the output value isn't modified. */
+bool object_dupli_lookup_attribute(DupliObject *dupli, const char *name, float r_value[4]);
 
 #ifdef __cplusplus
 }

@@ -188,6 +188,23 @@ static void rna_DepsgraphObjectInstance_uv_get(PointerRNA *ptr, float *uv)
   }
 }
 
+static bool rna_DepsgraphObjectInstance_lookup_attribute(struct DepsgraphObjectInstance *ptr,
+                                                         const char *name,
+                                                         float r_value[4])
+{
+  RNA_DepsgraphIterator *di = (RNA_DepsgraphIterator *)ptr;
+  DEGObjectIterData *deg_iter = (DEGObjectIterData *)di->iter.data;
+
+  if (deg_iter->dupli_object_current != NULL) {
+    if (object_dupli_lookup_attribute(deg_iter->dupli_object_current, name, r_value)) {
+      return true;
+    }
+  }
+
+  copy_v4_fl(r_value, 0.0f);
+  return false;
+}
+
 /* ******************** Sorted  ***************** */
 
 static int rna_Depsgraph_mode_get(PointerRNA *ptr)
@@ -533,7 +550,8 @@ static PointerRNA rna_Depsgraph_view_layer_eval_get(PointerRNA *ptr)
 static void rna_def_depsgraph_instance(BlenderRNA *brna)
 {
   StructRNA *srna;
-  PropertyRNA *prop;
+  PropertyRNA *prop, *parm;
+  FunctionRNA *func;
 
   srna = RNA_def_struct(brna, "DepsgraphObjectInstance", NULL);
   RNA_def_struct_ui_text(srna,
@@ -625,6 +643,19 @@ static void rna_def_depsgraph_instance(BlenderRNA *brna)
   RNA_def_property_array(prop, 2);
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE | PROP_EDITABLE);
   RNA_def_property_float_funcs(prop, "rna_DepsgraphObjectInstance_uv_get", NULL, NULL);
+
+  /* Functions */
+  func = RNA_def_function(
+      srna, "lookup_attribute", "rna_DepsgraphObjectInstance_lookup_attribute");
+  RNA_def_function_ui_description(func, "Looks up a Geometry Nodes instance attribute by name");
+  parm = RNA_def_string(func, "name", NULL, MAX_CUSTOMDATA_LAYER_NAME, "name", "");
+  RNA_def_parameter_flags(parm, 0, PARM_REQUIRED);
+  parm = RNA_def_boolean(func, "success", false, "success", "");
+  RNA_def_function_return(func, parm);
+  parm = RNA_def_float_array(
+      func, "value", 4, NULL, FLT_MIN, FLT_MAX, "value", "", FLT_MIN, FLT_MAX);
+  RNA_def_parameter_flags(parm, PROP_THICK_WRAP, 0);
+  RNA_def_function_output(func, parm);
 }
 
 static void rna_def_depsgraph_update(BlenderRNA *brna)

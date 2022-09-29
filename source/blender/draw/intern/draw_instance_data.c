@@ -653,6 +653,9 @@ static void drw_uniform_attribute_lookup(GPUUniformAttr *attr,
 
   /* If requesting instance data, check the parent particle system and object. */
   if (attr->use_dupli) {
+    if (dupli_source && object_dupli_lookup_attribute(dupli_source, attr->name, r_data)) {
+      return;
+    }
     if (dupli_source && dupli_source->particle_system) {
       ParticleSettings *settings = dupli_source->particle_system->part;
       if (drw_uniform_property_lookup((ID *)settings, attr->name_id_prop, r_data) ||

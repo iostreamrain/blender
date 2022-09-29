@@ -88,6 +88,10 @@ bool ObjectAttribute::sync(const blender::draw::ObjectRef &ref, const GPUUniform
 
   /* If requesting instance data, check the parent particle system and object. */
   if (attr.use_dupli) {
+    if ((ref.dupli_object != nullptr) &&
+        object_dupli_lookup_attribute(ref.dupli_object, attr.name, &data_x)) {
+      return true;
+    }
     if ((ref.dupli_object != nullptr) && (ref.dupli_object->particle_system != nullptr)) {
       ParticleSettings *settings = ref.dupli_object->particle_system->part;
       if (this->id_property_lookup((ID *)settings, attr.name_id_prop) ||

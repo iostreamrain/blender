@@ -370,6 +370,10 @@ static float4 lookup_instance_property(BL::DepsgraphObjectInstance &b_instance,
 
   /* If requesting instance data, check the parent particle system and object. */
   if (use_instancer && b_instance.is_instance()) {
+    if (b_instance.lookup_attribute(name.c_str(), &value.x)) {
+      return value;
+    }
+
     BL::ParticleSystem b_psys = b_instance.particle_system();
 
     if (b_psys) {

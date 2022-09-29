@@ -98,6 +98,8 @@ struct DupliContext {
   Vector<Object *> *instance_stack;
 
   int persistent_id[MAX_DUPLI_RECUR];
+  int64_t instance_idx[MAX_DUPLI_RECUR];
+  const GeometrySet *instance_data[MAX_DUPLI_RECUR];
   int level;
 
   const struct DupliGenerator *gen;
@@ -148,8 +150,13 @@ static void init_context(DupliContext *r_ctx,
 /**
  * Create sub-context for recursive duplis.
  */
-static bool copy_dupli_context(
-    DupliContext *r_ctx, const DupliContext *ctx, Object *ob, const float mat[4][4], int index)
+static bool copy_dupli_context(DupliContext *r_ctx,
+                               const DupliContext *ctx,
+                               Object *ob,
+                               const float mat[4][4],
+                               int index,
+                               const GeometrySet *gset = nullptr,
+                               int64_t gset_idx = 0)
 {
   *r_ctx = *ctx;
 
@@ -165,6 +172,8 @@ static bool copy_dupli_context(
     mul_m4_m4m4(r_ctx->space_mat, (float(*)[4])ctx->space_mat, mat);
   }
   r_ctx->persistent_id[r_ctx->level] = index;
+  r_ctx->instance_idx[r_ctx->level] = gset_idx;
+  r_ctx->instance_data[r_ctx->level] = gset;
   ++r_ctx->level;
 
   if (r_ctx->level == MAX_DUPLI_RECUR - 1) {
@@ -181,8 +190,13 @@ static bool copy_dupli_context(
  *
  * \param mat: is transform of the object relative to current context (including #Object.obmat).
  */
-static DupliObject *make_dupli(
-    const DupliContext *ctx, Object *ob, const ID *object_data, const float mat[4][4], int index)
+static DupliObject *make_dupli(const DupliContext *ctx,
+                               Object *ob,
+                               const ID *object_data,
+                               const float mat[4][4],
+                               int index,
+                               const GeometrySet *gset = nullptr,
+                               int64_t gset_idx = 0)
 {
   DupliObject *dob;
   int i;
@@ -216,6 +230,14 @@ static DupliObject *make_dupli(
     dob->persistent_id[i] = INT_MAX;
   }
 
+  /* Store geometry set data for attribute lookup. */
+  dob->instance_idx[0] = (int)gset_idx;
+  dob->instance_data[0] = gset;
+  for (i = 1; i < ctx->level + 1; i++) {
+    dob->instance_idx[i] = (int)ctx->instance_idx[ctx->level - i];
+    dob->instance_data[i] = ctx->instance_data[ctx->level - i];
+  }
+
   /* Meta-balls never draw in duplis, they are instead merged into one by the basis
    * meta-ball outside of the group. this does mean that if that meta-ball is not in the
    * scene, they will not show up at all, limitation that should be solved once. */
@@ -246,9 +268,11 @@ static DupliObject *make_dupli(
 static DupliObject *make_dupli(const DupliContext *ctx,
                                Object *ob,
                                const float mat[4][4],
-                               int index)
+                               int index,
+                               const GeometrySet *gset = nullptr,
+                               int64_t gset_idx = 0)
 {
-  return make_dupli(ctx, ob, static_cast<ID *>(ob->data), mat, index);
+  return make_dupli(ctx, ob, static_cast<ID *>(ob->data), mat, index, gset, gset_idx);
 }
 
 /**
@@ -259,7 +283,9 @@ static DupliObject *make_dupli(const DupliContext *ctx,
 static void make_recursive_duplis(const DupliContext *ctx,
                                   Object *ob,
                                   const float space_mat[4][4],
-                                  int index)
+                                  int index,
+                                  const GeometrySet *gset = nullptr,
+                                  int64_t gset_idx = 0)
 {
   if (ctx->instance_stack->contains(ob)) {
     /* Avoid recursive instances. */
@@ -269,7 +295,7 @@ static void make_recursive_duplis(const DupliContext *ctx,
   /* Simple preventing of too deep nested collections with #MAX_DUPLI_RECUR. */
   if (ctx->level < MAX_DUPLI_RECUR) {
     DupliContext rctx;
-    if (!copy_dupli_context(&rctx, ctx, ob, space_mat, index)) {
+    if (!copy_dupli_context(&rctx, ctx, ob, space_mat, index, gset, gset_idx)) {
       return;
     }
     if (rctx.gen) {
@@ -872,12 +898,12 @@ static void make_duplis_geometry_set_impl(const DupliContext *ctx,
         Object &object = reference.object();
         float matrix[4][4];
         mul_m4_m4m4(matrix, parent_transform, instance_offset_matrices[i].values);
-        make_dupli(ctx_for_instance, &object, matrix, id);
+        make_dupli(ctx_for_instance, &object, matrix, id, &geometry_set, i);
 
         float space_matrix[4][4];
         mul_m4_m4m4(space_matrix, instance_offset_matrices[i].values, object.imat);
         mul_m4_m4_pre(space_matrix, parent_transform);
-        make_recursive_duplis(ctx_for_instance, &object, space_matrix, id);
+        make_recursive_duplis(ctx_for_instance, &object, space_matrix, id, &geometry_set, i);
         break;
       }
       case InstanceReference::Type::Collection: {
@@ -889,8 +915,13 @@ static void make_duplis_geometry_set_impl(const DupliContext *ctx,
         mul_m4_m4_pre(collection_matrix, parent_transform);
 
         DupliContext sub_ctx;
-        if (!copy_dupli_context(
-                &sub_ctx, ctx_for_instance, ctx_for_instance->object, nullptr, id)) {
+        if (!copy_dupli_context(&sub_ctx,
+                                ctx_for_instance,
+                                ctx_for_instance->object,
+                                nullptr,
+                                id,
+                                &geometry_set,
+                                i)) {
           break;
         }
 
@@ -915,8 +946,13 @@ static void make_duplis_geometry_set_impl(const DupliContext *ctx,
         mul_m4_m4m4(new_transform, parent_transform, instance_offset_matrices[i].values);
 
         DupliContext sub_ctx;
-        if (copy_dupli_context(
-                &sub_ctx, ctx_for_instance, ctx_for_instance->object, nullptr, id)) {
+        if (copy_dupli_context(&sub_ctx,
+                               ctx_for_instance,
+                               ctx_for_instance->object,
+                               nullptr,
+                               id,
+                               &geometry_set,
+                               i)) {
           make_duplis_geometry_set_impl(
               &sub_ctx, reference.geometry_set(), new_transform, true, false);
         }
@@ -1708,6 +1744,72 @@ void free_object_duplilist(ListBase *lb)
 {
   BLI_freelistN(lb);
   MEM_freeN(lb);
+}
+
+bool object_dupli_lookup_attribute(DupliObject *dupli, const char *name, float r_value[4])
+{
+  using namespace blender;
+
+  for (int i = 0; i < MAX_DUPLI_RECUR; i++) {
+    if (dupli->instance_data[i] == nullptr) {
+      continue;
+    }
+
+    const InstancesComponent *component =
+        dupli->instance_data[i]->get_component_for_read<InstancesComponent>();
+
+    if (component != nullptr) {
+      const bke::CustomDataAttributes &attrs = component->instance_attributes();
+      std::optional<GSpan> data = attrs.get_for_read(name);
+
+      if (data.has_value()) {
+        const CPPType &data_type = data->type();
+        const void *data_ptr = (*data)[dupli->instance_idx[i]];
+        float scalar_value;
+
+        switch (bke::cpp_type_to_custom_data_type(data_type)) {
+          /* Vector attributes. */
+          case CD_PROP_FLOAT2:
+          case CD_PROP_FLOAT3:
+          case CD_PROP_COLOR:
+            copy_v4_fl4(r_value, 0.0f, 0.0f, 0.0f, 1.0f);
+            memcpy(r_value, data_ptr, data_type.size());
+            return true;
+
+          case CD_PROP_BYTE_COLOR:
+            *reinterpret_cast<ColorGeometry4f *>(
+                r_value) = static_cast<const ColorGeometry4b *>(data_ptr)->decode();
+            return true;
+
+          /* Scalar attributes. */
+          case CD_PROP_FLOAT:
+            scalar_value = *static_cast<const float *>(data_ptr);
+            break;
+
+          case CD_PROP_INT32:
+            scalar_value = static_cast<float>(*static_cast<const int *>(data_ptr));
+            break;
+
+          case CD_PROP_BOOL:
+            scalar_value = *static_cast<const bool *>(data_ptr) ? 1.0f : 0.0f;
+            break;
+
+          case CD_PROP_INT8:
+            scalar_value = static_cast<float>(*static_cast<const int8_t *>(data_ptr));
+            break;
+
+          /* Skip unknown types. */
+          default:
+            continue;
+        }
+
+        copy_v4_fl4(r_value, scalar_value, scalar_value, scalar_value, 1.0f);
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /** \} */
